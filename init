@@ -1,0 +1,95 @@
+#!/bin/bash
+
+exitOnError(){
+  # $1 must be set to $?
+  status=$1
+  message=$2
+  [ "$message" != "" ] || message="Error!"
+  if [ "$status" != 0 ]; then
+    printf "%s (status %s)\n" "$message" "$status"
+    exit "$status"
+  fi
+}
+
+exitIfNotIn(){
+  # $1 is the name of the variable to check - not the variable itself
+  # $2 is a string of comma separated possible values
+  var="$(eval echo "\$$1")"
+  for value in ${2//,/ }
+  do
+    if [ "${var,,}" = "${value,,}" ]; then
+      return 0
+    fi
+  done
+  printf "Environment variable %s=%s must be one of the following: " "$1" "$var"
+  for value in ${2//,/ }
+  do
+    printf "%s " "$value"
+  done
+  printf "\n"
+  exit 1
+}
+
+printf "========================================================\n"
+printf "========================================================\n"
+printf "                    _ _          _ \n"
+printf "                   | | |        | |\n"
+printf "                   | | |_   ____| |\n"
+printf "                   | | \ \ / / _\` |\n"
+printf "                   | | |\ V / (_| |\n"
+printf "                   |_|_| \_/ \__,_|\n"
+printf "========================================================\n"
+printf "========================================================\n"
+printf "========= by github.com/qnimbus - B. van Wetten ========\n\n"
+
+# Set UID/PID of user that llvd will be run as
+LLVDPGID=${PGID:-1000}
+LLVDPUID=${PUID:-1000}
+
+# Check to see if group/user already exist, if so, delete
+EXISTINGGROUPNAME=$(getent group "$LLVDPGID" | cut -d ':' -f 1)
+EXISTINGUSERNAME=$(getent passwd "$LLVDPUID" | cut -d ':' -f 1)
+if [[ -n "$EXISTINGGROUPNAME" ]]; then
+    groupdel -f "$EXISTINGGROUPNAME"
+fi
+if [[ -n "$EXISTINGUSERNAME" ]]; then
+    userdel -f "$EXISTINGUSERNAME"
+fi
+
+exitIfNotIn LOG "yes,no,true,false"
+
+# Create user/group
+mkdir -p /home/dockeruser
+adduser --system --disabled-password --uid "$LLVDPUID" --home /home/dockeruser dockeruser
+addgroup --gid "$LLVDPGID" dockeruser
+chown "$LLVDPUID":"$LLVDPGID" /downloads
+chown "$LLVDPUID":"$LLVDPGID" /home/dockeruser
+chown "$LLVDPUID":"$LLVDPGID" /usr/bin/llvd
+chmod u+s /usr/bin/llvd
+HOME=/home/dockeruser
+export HOME
+
+PYTHON_VERSION=$(python3 --version 2>&1 | cut -d " " -f 2)
+FFMPEG_VERSION=$(ffmpeg -version | head -n 1 | grep -oE 'version [0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+printf "python version: %s\n" "${PYTHON_VERSION}"
+printf "ffmpeg version: %s\n\n" "${FFMPEG_VERSION}"
+
+# Test if '/downloads' is writable by user
+su-exec dockeruser:dockeruser test -w "/downloads"
+exitOnError $? "/downloads is not writable for dockeruser:dockeruser (${LLVDPUID}:${LLVDPGID}), please fix its ownership and/or permissions"
+
+# Run llvd with remainder of command line arguments
+if [ "${LOG,,}" = "yes" ] || [ "${LOG,,}" = "true" ]; then
+  # Create log directory
+  su-exec dockeruser:dockeruser mkdir -p /downloads/log
+  
+  su-exec dockeruser:dockeruser /usr/bin/llvd "$@" 2>> >(tee -a /downloads/log/llvd.err) >> >(tee -a /downloads/log/llvd.log)
+else
+  su-exec dockeruser:dockeruser /usr/bin/llvd "$@"
+fi
+
+status=$?
+
+printf "\n========================================================\n"
+printf "llvd exited with status %s\n" "$status"
+printf "========================================================\n"

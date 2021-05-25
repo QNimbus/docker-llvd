@@ -1,0 +1,22 @@
+---
+  version: '3.7'
+
+  volumes: {}
+
+  services:
+
+    llvd:
+      build:
+        context: ./
+        dockerfile: Dockerfile
+        args: {}
+      image: qnimbus/llvd
+      container_name: llvd
+      restart: always
+      environment: []
+      ports: []
+      volumes:
+        - type: bind
+          source: ./downloads
+          target: /downloads
+          read_only: false
